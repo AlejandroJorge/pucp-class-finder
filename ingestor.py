@@ -123,13 +123,14 @@ def pipeline(filename: str):
         unparsed_json = transform_text_to_json(text_content)
         parsed_json = json.loads(unparsed_json)
         sync_with_firestore(parsed_json)
-        time.sleep(50) # Gemini free tier
     except Exception as ex:
         print(f"{threading.get_ident()}: Error while processing {filename}: {ex}")
 
 def chained_pipeline(*filenames: str):
-    for filename in filenames:
+    for filename in filenames[:-1]:
         pipeline(filename)
+        time.sleep(40)
+    pipeline(filenames[-1]) # Don't block last one lmao
 
 def main():
     if not os.path.exists(pdfs_dir_path):
@@ -144,7 +145,7 @@ def main():
             os.rename(curr_path, curr_path.lower())
 
     filenames = [filename[:-4] for filename in os.listdir(pdfs_dir_path) if filename[-3:] == 'pdf']
-
+    
     n = 20
     filenames_chunks = [filenames[i * (len(filenames) // n) + min(i, len(filenames) % n):(i + 1) * (len(filenames) // n) + min(i + 1, len(filenames) % n)] for i in range(n)]
 
