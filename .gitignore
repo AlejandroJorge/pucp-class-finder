@@ -2,3 +2,4 @@
 .env
 json-output/
 raw-pdfs
+service_account.json

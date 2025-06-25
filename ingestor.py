@@ -6,6 +6,8 @@ from google import genai
 import threading
 import json
 import time
+import firebase_admin
+from firebase_admin import credentials, firestore, initialize_app
 
 load_dotenv()
 
@@ -22,6 +24,17 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 pdfs_dir_path = os.path.join(os.path.curdir, "raw-pdfs")
 json_dir_path = os.path.join(os.path.curdir, "json-output")
+
+def initialize_firestore():
+    try:
+        cred = credentials.ApplicationDefault()
+        firebase_admin.initialize_app(cred)
+        print("Firebase connection done.")
+    except ValueError:
+        print("Firebase application already initialized. Skipping")
+    except Exception as ex:
+        print(f"Firebase application error: {ex}")
+        exit(1)
 
 def transform_pdf_to_text(filename: str) -> str:
     curr_pdf_path = os.path.join(pdfs_dir_path, f"{filename}.pdf")
@@ -86,19 +99,30 @@ def transform_text_to_json(text: str):
 
     return json_text
 
-def write_json(filename: str, content):
-    json_path = os.path.join(json_dir_path, f"{filename}.json")
-    json.loads(content) # Validate it's a json
-    print(f"{threading.get_ident()}: Writing json object to {json_path}")
-    with open(json_path, mode="w+") as f:
-        f.write(content)
-    print(f"{threading.get_ident()}: Written json object to {json_path}")
+def sync_with_firestore(data: dict):
+    if not firebase_admin._apps:
+        initialize_app()
+
+    db = firestore.client()
+
+    codigo = data.get('codigo')
+    if codigo is None:
+        raise Exception("Couldn't get 'codigo' field from parsed json")
+
+    try:
+        print(f"Writing {codigo} to firestore")
+        doc_ref = db.collection("classes").document(codigo)
+        doc_ref.set(data)
+        print(f"Written {codigo} to firestore successfully")
+    except Exception as ex:
+        print(f"Couldn't sync class with 'codigo': {codigo} because: {ex}")
 
 def pipeline(filename: str):
     try:
         text_content = transform_pdf_to_text(filename)
         unparsed_json = transform_text_to_json(text_content)
-        write_json(filename, unparsed_json)
+        parsed_json = json.loads(unparsed_json)
+        sync_with_firestore(parsed_json)
         time.sleep(50) # Gemini free tier
     except Exception as ex:
         print(f"{threading.get_ident()}: Error while processing {filename}: {ex}")
