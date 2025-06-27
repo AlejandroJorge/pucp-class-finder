@@ -1,5 +1,6 @@
 .venv
 .env
-json-output/
+artifacts/
 raw-pdfs
 service_account.json
+baml_client/
