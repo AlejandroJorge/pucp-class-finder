@@ -2,6 +2,7 @@ import fitz
 import os
 import json
 import logging
+from datetime import datetime
 from dotenv import load_dotenv
 import time
 import random
@@ -71,7 +72,7 @@ def process_and_upload(filename: str):
             structured_content = Course.model_validate_json(f.read())
     else:
         made_llm_call = True
-        structured_content = b.ExtractCourse(txt_content)
+        structured_content = b.ExtractCourse(txt_content, datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'))
         with open(json_artifact_path, 'w+', encoding='utf-8') as f:
             json.dump(structured_content.model_dump(), f, indent=4)
 

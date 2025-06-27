@@ -50,10 +50,12 @@ class Program {
   prerequisites (CoursePrerequisite | CreditsPrerequisite)[]
 }
 
-function ExtractCourse(raw_text: string) -> Course {
+function ExtractCourse(raw_text: string, curr_time: string) -> Course {
   client CustomGemini
 
   prompt #"
+    Consider the current time as {{ curr_time }}.
+
     Extract from this content:
     {{ raw_text }}
 
