@@ -18,33 +18,25 @@ from baml_client.sync_client import b
 from baml_client.config import set_log_level
 from baml_client.types import Course
 
-# ==============================================================================
-# CONFIGURACIÓN
-# ==============================================================================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 set_log_level("OFF")
 load_dotenv()
 
-# --- Rutas
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PDFS_DIR_PATH = os.path.join(BASE_DIR, "raw-pdfs")
 ARTIFACTS_DIR_PATH = os.path.join(BASE_DIR, "artifacts")
 
-# --- Parámetros de Ingesta
 BATCH_SIZE = 32
-MAX_WORKERS = 4 # Número de hilos para procesar PDFs
+MAX_WORKERS = 4
 
-# --- Configuración de Qdrant
 QDRANT_URL = os.getenv("QDRANT_URL")
 QDRANT_API_KEY = os.getenv("QDRANT_API_KEY")
 COLLECTION_NAME = "courses"
-VECTOR_SIZE = 384  # Dimensión del modelo 'all-MiniLM-L6-v2'
+VECTOR_SIZE = 768
 
 UUID_NAMESPACE = uuid.UUID("a55a2530-9223-4477-a378-b17173e3a473")
 
-# --- Inicialización de Clientes y Modelos
 try:
-    # Inicializa Firebase (una sola vez)
     cred = firebase_admin.credentials.ApplicationDefault()
     firebase_admin.initialize_app(cred)
     logging.info("Firebase connection done.")
@@ -52,19 +44,10 @@ except ValueError:
     logging.warning("Firebase application already initialized. Skipping.")
 
 db = firestore.client()
-encoder = SentenceTransformer('all-MiniLM-L6-v2', device='cpu')
+encoder = SentenceTransformer('all-mpnet-base-v2', device='cpu')
 qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
 
-# ==============================================================================
-# FUNCIONES
-# ==============================================================================
-
 def process_pdf_to_course(filename: str) -> tuple[Course, bool]:
-    """
-    Función de trabajo para los hilos. Procesa un solo PDF a un objeto Course.
-    Devuelve el objeto Course y un booleano indicando si se hizo una llamada al LLM.
-    """
-    # 1. Extracción de PDF a TXT (con caché)
     txt_artifact_path = os.path.join(ARTIFACTS_DIR_PATH, f"{filename}.txt")
     if os.path.exists(txt_artifact_path):
         with open(txt_artifact_path, 'r', encoding='utf-8') as f:
@@ -79,7 +62,6 @@ def process_pdf_to_course(filename: str) -> tuple[Course, bool]:
             f.write(txt_content)
     logging.info(f"[{filename}] TXT extraído.")
 
-    # 2. Extracción de TXT a JSON (con caché y LLM)
     json_artifact_path = os.path.join(ARTIFACTS_DIR_PATH, f"{filename}.json")
     made_llm_call = False
     if os.path.exists(json_artifact_path):
@@ -89,22 +71,17 @@ def process_pdf_to_course(filename: str) -> tuple[Course, bool]:
         structured_content = b.ExtractCourse(txt_content, datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'))
         made_llm_call = True
         with open(json_artifact_path, 'w+', encoding='utf-8') as f:
-            # Usamos model_dump_json para un formato JSON limpio
             f.write(structured_content.model_dump_json(indent=4))
     logging.info(f"[{filename}] JSON extraído.")
     
     return structured_content, made_llm_call
 
 def upload_batch(batch: List[Course]):
-    """
-    Toma un lote de objetos Course, los vectoriza y los sube a Qdrant y Firestore.
-    """
     if not batch:
         return
-        
+    
     logging.info(f"Procesando lote de {len(batch)} cursos para carga.")
 
-    # --- 1. Vectorización por lotes ---
     texts_to_encode = [
         (f"Curso: {c.name}. Facultad: {c.faculty}. Resumen: {c.summary}. "
          f"Resultados de Aprendizaje: {'. '.join(c.learningOutcomes)}. "
@@ -116,7 +93,6 @@ def upload_batch(batch: List[Course]):
     ]
     vectors = encoder.encode(texts_to_encode, show_progress_bar=False).tolist()
 
-    # --- 2. Carga por lotes a Qdrant ---
     qdrant_points = [
         models.PointStruct(
             id=str(uuid.uuid5(UUID_NAMESPACE, course.code)),
@@ -128,7 +104,6 @@ def upload_batch(batch: List[Course]):
     qdrant_client.upsert(collection_name=COLLECTION_NAME, points=qdrant_points, wait=False)
     logging.info(f"Lote enviado a Qdrant.")
 
-    # --- 3. Carga por lotes a Firestore ---
     firestore_batch = db.batch()
     for course in batch:
         doc_ref = db.collection("courses").document(course.code)
@@ -138,15 +113,11 @@ def upload_batch(batch: List[Course]):
 
 
 def main():
-    """
-    Orquesta el proceso de extracción paralela y carga por lotes.
-    """
     if not os.path.exists(PDFS_DIR_PATH):
         raise Exception("Couldn't find raw pdfs directory")
     if not os.path.exists(ARTIFACTS_DIR_PATH):
         os.mkdir(ARTIFACTS_DIR_PATH)
 
-    # Asegura que la colección de Qdrant exista
     try:
         collection_exists = qdrant_client.collection_exists(collection_name=COLLECTION_NAME)
         if not collection_exists:
@@ -169,25 +140,21 @@ def main():
         for future in as_completed(future_to_filename):
             filename = future_to_filename[future]
             try:
-                # Recolecta el resultado del hilo
                 course, made_llm_call = future.result()
                 courses_batch.append(course)
                 
                 logging.info(f"[{filename}] Procesado y listo para el lote.")
 
-                # Si el lote está lleno, súbelo y vacíalo
                 if len(courses_batch) >= BATCH_SIZE:
                     upload_batch(courses_batch)
-                    courses_batch = [] # Reinicia el lote
+                    courses_batch = []
 
-                # Mantiene la pausa si se usó el LLM
                 if made_llm_call:
                     time.sleep(random.uniform(5, 10))
 
             except Exception as e:
                 logging.error(f"Error procesando {filename}: {e}")
 
-    # Sube cualquier curso restante en el último lote parcial
     if courses_batch:
         upload_batch(courses_batch)
 
