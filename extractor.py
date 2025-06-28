@@ -47,7 +47,7 @@ db = firestore.client()
 encoder = SentenceTransformer('all-mpnet-base-v2', device='cpu')
 qdrant_client = QdrantClient(url=QDRANT_URL, api_key=QDRANT_API_KEY)
 
-def process_pdf_to_course(filename: str) -> tuple[Course, bool]:
+def process_pdf_to_course(filename: str) -> Course:
     txt_artifact_path = os.path.join(ARTIFACTS_DIR_PATH, f"{filename}.txt")
     if os.path.exists(txt_artifact_path):
         with open(txt_artifact_path, 'r', encoding='utf-8') as f:
@@ -63,18 +63,17 @@ def process_pdf_to_course(filename: str) -> tuple[Course, bool]:
     logging.info(f"[{filename}] TXT extraído.")
 
     json_artifact_path = os.path.join(ARTIFACTS_DIR_PATH, f"{filename}.json")
-    made_llm_call = False
     if os.path.exists(json_artifact_path):
         with open(json_artifact_path, 'r', encoding='utf-8') as f:
             structured_content = Course.model_validate_json(f.read())
     else:
         structured_content = b.ExtractCourse(txt_content, datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ'))
-        made_llm_call = True
+        logging.info(f"Made an llm call for {filename}")
         with open(json_artifact_path, 'w+', encoding='utf-8') as f:
             f.write(structured_content.model_dump_json(indent=4))
     logging.info(f"[{filename}] JSON extraído.")
     
-    return structured_content, made_llm_call
+    return structured_content
 
 def upload_batch(batch: List[Course]):
     if not batch:
@@ -113,6 +112,11 @@ def upload_batch(batch: List[Course]):
 
 
 def main():
+    for file in os.listdir(PDFS_DIR_PATH):
+        lower_file = file.lower()
+        if file != lower_file:
+            os.rename(os.path.join(PDFS_DIR_PATH, file), os.path.join(PDFS_DIR_PATH, lower_file))
+
     if not os.path.exists(PDFS_DIR_PATH):
         raise Exception("Couldn't find raw pdfs directory")
     if not os.path.exists(ARTIFACTS_DIR_PATH):
@@ -140,7 +144,7 @@ def main():
         for future in as_completed(future_to_filename):
             filename = future_to_filename[future]
             try:
-                course, made_llm_call = future.result()
+                course = future.result()
                 courses_batch.append(course)
                 
                 logging.info(f"[{filename}] Procesado y listo para el lote.")
@@ -148,9 +152,6 @@ def main():
                 if len(courses_batch) >= BATCH_SIZE:
                     upload_batch(courses_batch)
                     courses_batch = []
-
-                if made_llm_call:
-                    time.sleep(random.uniform(5, 10))
 
             except Exception as e:
                 logging.error(f"Error procesando {filename}: {e}")

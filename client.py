@@ -133,7 +133,7 @@ def post_process_courses(user_prompt: str, courses: List[Course]) -> List[Dict[s
         return []
 
 if __name__ == "__main__":
-    prompt = "Quiero construir compiladores, runtimes y sistemas de bajo nivel. Odio los negocios y las grandes empresas"
+    prompt = "Quiero ser gerente general en algun futuro de una importante empresa peruana como un banco o corporacion"
 
     refined_query = expand_query_with_gemini(prompt)
     print("==================================================")
@@ -148,4 +148,16 @@ if __name__ == "__main__":
     print("Final recommendations: ", len(final_recommendations))
 
     print("==================================================")
-    print(final_recommendations)
+    for i, course in enumerate(final_recommendations, 1):
+        print(f"{i}. {course.get('name', '')} (Código: {course.get('code', '')})")
+        print(f"   Recomendación: {course.get('explanation', '')}")
+        print(f"   Factores favorables: {course.get('favourable_factors', [])}")
+        print(f"   Factores desfavorables: {course.get('unfavourable_factors', [])}")
+        syllabus = course.get('syllabus', [])
+        if isinstance(syllabus, list):
+            topics = [unit.get('title', '') for unit in syllabus if isinstance(unit, dict)]
+            print(f"   Temas cubiertos: {topics}")
+        print()
+
+    print("==================================================")
+    print()
